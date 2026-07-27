@@ -1,0 +1,40 @@
+name: Bug 报告
+description: 报告可复现的旁路由项目问题
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: 请勿提交订阅 URL、Token、密码、节点凭据或完整生产配置。
+  - type: input
+    id: version
+    attributes:
+      label: 项目版本
+      placeholder: 0.2.0
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      description: Debian 版本、架构、网络拓扑的脱敏摘要
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为和脱敏日志
+    validations:
+      required: true

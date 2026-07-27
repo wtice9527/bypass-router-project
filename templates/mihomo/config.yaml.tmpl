@@ -1,0 +1,83 @@
+mixed-port: {{MIHOMO_MIXED_PORT}}
+redir-port: {{MIHOMO_REDIR_PORT}}
+tproxy-port: {{MIHOMO_TPROXY_PORT}}
+allow-lan: false
+mode: rule
+log-level: warning
+ipv6: false
+external-controller: 127.0.0.1:{{MIHOMO_CONTROLLER_PORT}}
+unified-delay: true
+tcp-concurrent: true
+profile:
+  store-selected: false
+  store-fake-ip: false
+sniffer:
+  enable: true
+  force-dns-mapping: true
+  parse-pure-ip: true
+  override-destination: true
+  sniff:
+    HTTP: {ports: [80, 8080-8880]}
+    TLS: {ports: [443, 8443]}
+    QUIC: {ports: [443, 8443]}
+dns:
+  enable: true
+  listen: 127.0.0.1:{{MIHOMO_DNS_PORT}}
+  ipv6: false
+  enhanced-mode: redir-host
+  respect-rules: true
+  proxy-server-nameserver:
+    # Fixed-IP encrypted bootstrap avoids public plaintext DNS and avoids a
+    # proxy-DNS circular dependency while resolving provider node hostnames.
+    - https://1.1.1.1/dns-query#DIRECT
+    - https://8.8.8.8/dns-query#DIRECT
+  nameserver:
+    - https://1.1.1.1/dns-query#代理节点
+    - https://8.8.8.8/dns-query#代理节点
+  fallback: []
+proxy-providers:
+  main:
+    type: file
+    path: ./providers/main.yaml
+    health-check:
+      enable: true
+      url: {{PROXY_HEALTH_URL}}
+      interval: 300
+      timeout: 5000
+      lazy: false
+proxy-groups:
+  - name: 代理节点
+    type: select
+    proxies: [常用优先, 自动选择, 故障转移]
+    use: [main]
+  - name: 常用优先
+    type: fallback
+    url: {{PROXY_HEALTH_URL}}
+    interval: 60
+    lazy: false
+    use: [main]
+  - name: 最低延迟
+    type: url-test
+    url: {{PROXY_HEALTH_URL}}
+    interval: 180
+    tolerance: 80
+    lazy: false
+    use: [main]
+  - name: 自动选择
+    type: fallback
+    url: {{PROXY_HEALTH_URL}}
+    interval: 60
+    lazy: false
+    proxies: [最低延迟, DIRECT]
+  - name: 故障转移
+    type: fallback
+    url: {{PROXY_HEALTH_URL}}
+    interval: 180
+    lazy: false
+    use: [main]
+rules:
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - DOMAIN-SUFFIX,cn,DIRECT
+  - MATCH,代理节点

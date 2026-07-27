@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "debian-side-router"
+version = "0.2.0"
+description = "可复制的 Debian 家庭旁路由：Mihomo、MosDNS、AdGuard Home、nftables 与 Web 控制台"
+requires-python = ">=3.11"
+dependencies = ["PyYAML>=6", "Werkzeug>=3.1"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+routerctl = "routerctl.cli:main"
+
+[tool.setuptools]
+packages = ["routerctl"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

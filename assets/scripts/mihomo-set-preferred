@@ -1,0 +1,63 @@
+#!/opt/bypass-router-web/venv/bin/python
+from __future__ import annotations
+import json, os, shutil, subprocess, sys, tempfile, time
+from pathlib import Path
+import yaml
+
+CONFIG=Path('/etc/bypass-router/mihomo/config.yaml')
+STATE=Path('/etc/bypass-router/mihomo/preferred-node.json')
+BACKUPS=Path('/var/lib/mihomo/preferred-backups')
+GROUP='常用优先'
+
+def restore_datapath():
+ subprocess.run(['systemctl','reset-failed','bypass-router-tproxy'],timeout=10)
+ subprocess.run(['systemctl','restart','mihomo'],check=True,timeout=30);time.sleep(6)
+ subprocess.run(['systemctl','restart','bypass-router-tproxy'],check=True,timeout=45)
+ checks=[['systemctl','is-active','--quiet','mihomo'],['systemctl','is-active','--quiet','bypass-router-tproxy'],['nft','list','table','inet','bypass_router'],['sh','-c',"ip -4 rule show priority 100 | grep -q 'fwmark 0x1/0x1 lookup 100'"],['sh','-c',"ip -4 route show table 100 | grep -q '^local default dev lo'"],['sh','-c',"ss -H -lnt | grep -q ':7892 ' && ss -H -lnu | grep -q ':7893 '"]]
+ if not all(subprocess.run(x,timeout=10).returncode==0 for x in checks):raise RuntimeError('Mihomo/TProxy 数据路径恢复验证失败')
+
+def atomic(path,data,mode=0o600):
+ path.parent.mkdir(parents=True,exist_ok=True);fd,tmp=tempfile.mkstemp(prefix='.'+path.name+'.',dir=str(path.parent));os.close(fd);Path(tmp).write_bytes(data);os.chmod(tmp,mode);os.replace(tmp,path)
+
+def main(node):
+ d=yaml.safe_load(CONFIG.read_text());provider=d.get('proxy-providers',{}).get('main',{});pf=Path('/var/lib/mihomo')/provider.get('path','./providers/main.yaml')
+ pd=yaml.safe_load(pf.read_text());names=[x.get('name') for x in pd.get('proxies',[]) if x.get('name')]
+ if node not in names: raise ValueError('节点不属于当前订阅')
+ # Preferred first in the provider; fallback with `use: main` follows this stable order.
+ ordered=[node]+[x for x in names if x!=node]
+ by_name={x.get('name'):x for x in pd.get('proxies',[]) if x.get('name')}
+ pd['proxies']=[by_name[x] for x in ordered]
+ groups=d.get('proxy-groups',[]);g=next((x for x in groups if x.get('name')==GROUP),None)
+ spec={'name':GROUP,'type':'fallback','url':'https://www.google.com/generate_204','interval':60,'lazy':False,'use':['main']}
+ if g:g.clear();g.update(spec)
+ else:groups.insert(1,spec)
+ # Top-level selector defaults to preferred failover. Provider nodes remain available through the existing `use: main`.
+ top=next(x for x in groups if x.get('name')=='代理节点');top['proxies']=[GROUP,'自动选择','故障转移'];top['use']=['main']
+ raw=yaml.safe_dump(d,allow_unicode=True,sort_keys=False).encode();BACKUPS.mkdir(parents=True,exist_ok=True);stamp=time.strftime('%Y%m%d-%H%M%S');b=BACKUPS/stamp;b.mkdir(mode=0o700);shutil.copy2(CONFIG,b/'config.yaml');shutil.copy2(pf,b/'main.yaml')
+ fd,tmp=tempfile.mkstemp(prefix='.preferred.',suffix='.yaml',dir='/tmp');os.close(fd);Path(tmp).write_bytes(raw)
+ try:
+  provider_raw=yaml.safe_dump(pd,allow_unicode=True,sort_keys=False).encode();atomic(pf,provider_raw)
+  p=subprocess.run(['/usr/local/bin/mihomo','-t','-d','/var/lib/mihomo','-f',tmp],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=45)
+  if p.returncode:raise RuntimeError('Mihomo配置校验失败：'+p.stdout.strip()[-500:])
+  atomic(CONFIG,raw);atomic(STATE,(json.dumps({'preferred':node,'updated_at':time.strftime('%Y-%m-%dT%H:%M:%S%z')},ensure_ascii=False)+'\n').encode())
+  restore_datapath()
+  # Force top-level choice to preferred failover group.
+  import urllib.request,urllib.parse
+  u='http://127.0.0.1:9090/proxies/'+urllib.parse.quote('代理节点',safe='');urllib.request.urlopen(urllib.request.Request(u,data=json.dumps({'name':GROUP}).encode(),method='PUT',headers={'Content-Type':'application/json'}),timeout=8)
+  # A preferred node must pass repeated real-path probes; one request is too weak
+  # for the intermittent timeout failure this tool is intended to prevent.
+  successes=0; last=''
+  for _ in range(3):
+   test=subprocess.run(['curl','-4','-sS','-x','http://127.0.0.1:7890','--max-time','10','-o','/dev/null','-w','%{http_code}','https://www.google.com/generate_204'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=13)
+   last=(test.stdout+' '+test.stderr).strip()[-300:]
+   if test.returncode==0 and test.stdout.startswith(('2','3')):successes+=1
+  if successes<3:raise RuntimeError(f'Google连续验证失败（{successes}/3）：'+last)
+ except Exception:
+  shutil.copy2(b/'config.yaml',CONFIG);shutil.copy2(b/'main.yaml',pf);restore_datapath();raise
+ finally:Path(tmp).unlink(missing_ok=True)
+ return {'ok':True,'preferred':node,'fallbacks':len(ordered)-1,'backup':stamp}
+
+try:
+ if len(sys.argv)!=2:raise ValueError('需要节点名称')
+ print(json.dumps(main(sys.argv[1]),ensure_ascii=False))
+except Exception as e:print(json.dumps({'ok':False,'error':str(e)},ensure_ascii=False));sys.exit(1)

@@ -1,0 +1,133 @@
+#!/opt/bypass-router-web/venv/bin/python
+from __future__ import annotations
+import argparse, ipaddress, json, os, re, shutil, subprocess, sys, tempfile, time, uuid
+from pathlib import Path
+import yaml
+
+CONFIG=Path('/etc/bypass-router/mihomo/config.yaml')
+STATE=Path('/etc/bypass-router/mihomo/custom-rules.json')
+BACKUPS=Path('/var/lib/mihomo/rule-backups')
+TYPES={'DOMAIN','DOMAIN-SUFFIX','DOMAIN-KEYWORD','IP-CIDR','IP-CIDR6','SRC-IP-CIDR','DST-PORT','SRC-PORT'}
+TARGETS={'代理节点','自动选择','故障转移','Netflix','国外媒体','国内媒体','微软服务','Telegram','Apple 服务','DIRECT','REJECT'}
+
+def restore_datapath():
+    subprocess.run(['systemctl','reset-failed','bypass-router-tproxy'],timeout=10)
+    subprocess.run(['systemctl','restart','mihomo'],check=True,timeout=30)
+    time.sleep(6)
+    subprocess.run(['systemctl','restart','bypass-router-tproxy'],check=True,timeout=45)
+    checks=[
+        ['systemctl','is-active','--quiet','mihomo'],
+        ['systemctl','is-active','--quiet','bypass-router-tproxy'],
+        ['nft','list','table','inet','bypass_router'],
+        ['sh','-c',"ip -4 rule show priority 100 | grep -q 'fwmark 0x1/0x1 lookup 100'"],
+        ['sh','-c',"ip -4 route show table 100 | grep -q '^local default dev lo'"],
+        ['sh','-c',"ss -H -lnt | grep -q ':7892 ' && ss -H -lnu | grep -q ':7893 '"],
+    ]
+    if not all(subprocess.run(x,timeout=10).returncode==0 for x in checks):
+        raise RuntimeError('Mihomo/TProxy 数据路径恢复验证失败')
+
+def atomic(path:Path,data:bytes,mode=0o600):
+    path.parent.mkdir(parents=True,exist_ok=True)
+    fd,tmp=tempfile.mkstemp(prefix='.'+path.name+'.',dir=str(path.parent));os.close(fd)
+    Path(tmp).write_bytes(data);os.chmod(tmp,mode);os.replace(tmp,path)
+
+def load_state():
+    if not STATE.exists(): return {'version':1,'applied':[],'rules':[]}
+    d=json.loads(STATE.read_text());d.setdefault('applied',[]);d.setdefault('rules',[]);return d
+
+def save_state(d): atomic(STATE,(json.dumps(d,ensure_ascii=False,indent=2)+'\n').encode())
+
+def validate(kind,payload,target):
+    kind=kind.upper().strip();payload=payload.strip();target=target.strip()
+    if kind not in TYPES: raise ValueError('不支持的规则类型')
+    if target not in TARGETS: raise ValueError('不支持的目标策略')
+    if not payload or len(payload)>253 or any(c in payload for c in '\r\n,'): raise ValueError('规则内容无效')
+    if kind in {'DOMAIN','DOMAIN-SUFFIX'}:
+        p=payload.lower().rstrip('.')
+        if not re.fullmatch(r'(?=.{1,253}$)(?:[a-z0-9_*-](?:[a-z0-9_*-]{0,61}[a-z0-9_*-])?\.)*[a-z0-9_*-](?:[a-z0-9_*-]{0,61}[a-z0-9_*-])?',p): raise ValueError('域名格式无效')
+        payload=p
+    elif kind=='DOMAIN-KEYWORD':
+        if len(payload)<2: raise ValueError('域名关键词至少2个字符')
+    elif kind in {'IP-CIDR','SRC-IP-CIDR'}:
+        n=ipaddress.ip_network(payload,strict=False)
+        if n.version!=4: raise ValueError('需要IPv4网段')
+        payload=str(n)
+    elif kind=='IP-CIDR6':
+        n=ipaddress.ip_network(payload,strict=False)
+        if n.version!=6: raise ValueError('需要IPv6网段')
+        payload=str(n)
+    elif kind in {'DST-PORT','SRC-PORT'}:
+        if not re.fullmatch(r'\d{1,5}(?:-\d{1,5})?',payload): raise ValueError('端口格式无效')
+        nums=[int(x) for x in payload.split('-')]
+        if any(x<1 or x>65535 for x in nums) or len(nums)==2 and nums[0]>nums[1]: raise ValueError('端口范围无效')
+    return kind,payload,target
+
+def rendered(rule):
+    kind,payload,target=validate(rule['type'],rule['payload'],rule['target'])
+    suffix=',no-resolve' if kind in {'IP-CIDR','IP-CIDR6','SRC-IP-CIDR'} else ''
+    return f'{kind},{payload},{target}{suffix}'
+
+def apply(state):
+    cfg=yaml.safe_load(CONFIG.read_text())
+    rules=list(cfg.get('rules') or [])
+    old=list(state.get('applied') or [])
+    if old:
+        if rules[:len(old)]!=old: raise RuntimeError('当前配置中的自定义规则前缀已被外部修改，请先检查配置')
+        rules=rules[len(old):]
+    enabled=[rendered(x) for x in sorted(state['rules'],key=lambda x:x['order']) if x.get('enabled',True)]
+    if len(enabled)!=len(set(enabled)): raise ValueError('存在重复的启用规则')
+    cfg['rules']=enabled+rules
+    raw=yaml.safe_dump(cfg,allow_unicode=True,sort_keys=False).encode()
+    BACKUPS.mkdir(parents=True,exist_ok=True);stamp=time.strftime('%Y%m%d-%H%M%S');b=BACKUPS/stamp;b.mkdir(mode=0o700)
+    shutil.copy2(CONFIG,b/'config.yaml');
+    if STATE.exists(): shutil.copy2(STATE,b/'custom-rules.json')
+    fd,tmp=tempfile.mkstemp(prefix='.candidate.',suffix='.yaml',dir='/tmp');os.close(fd);Path(tmp).write_bytes(raw)
+    try:
+        check=subprocess.run(['/usr/local/bin/mihomo','-t','-d','/var/lib/mihomo','-f',tmp],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=45)
+        if check.returncode: raise RuntimeError('Mihomo配置校验失败')
+        atomic(CONFIG,raw)
+        state['applied']=enabled;save_state(state)
+        restore_datapath()
+        test=subprocess.run(['curl','-4','-sS','-x','http://127.0.0.1:7890','--max-time','12','-o','/dev/null','-w','%{http_code}','https://www.google.com'],stdout=subprocess.PIPE,text=True,timeout=15)
+        if test.returncode or not test.stdout.startswith(('2','3')): raise RuntimeError('Google验证失败')
+    except Exception:
+        shutil.copy2(b/'config.yaml',CONFIG)
+        if (b/'custom-rules.json').exists(): shutil.copy2(b/'custom-rules.json',STATE)
+        else: STATE.unlink(missing_ok=True)
+        restore_datapath()
+        raise
+    finally: Path(tmp).unlink(missing_ok=True)
+    return {'ok':True,'applied_count':len(enabled),'backup':stamp}
+
+def public(r): return {k:r.get(k) for k in ['id','type','payload','target','enabled','order','note']}
+
+def main(a):
+    s=load_state();rs=s['rules']
+    if a.cmd=='list': return {'rules':[public(x) for x in sorted(rs,key=lambda x:x['order'])],'targets':sorted(TARGETS),'types':sorted(TYPES),'applied_count':len(s.get('applied',[]))}
+    if a.cmd=='add':
+        kind,payload,target=validate(a.type,a.payload,a.target);r={'id':uuid.uuid4().hex[:12],'type':kind,'payload':payload,'target':target,'enabled':True,'order':len(rs),'note':(a.note or '')[:120]};rs.append(r);result=apply(s);result['rule']=public(r);return result
+    r=next((x for x in rs if x['id']==a.id),None)
+    if not r: raise ValueError('规则不存在')
+    if a.cmd=='edit':
+        kind,payload,target=validate(a.type or r['type'],a.payload or r['payload'],a.target or r['target']);r.update(type=kind,payload=payload,target=target)
+        if a.enabled is not None:r['enabled']=a.enabled=='true'
+        if a.note is not None:r['note']=a.note[:120]
+        result=apply(s);result['rule']=public(r);return result
+    if a.cmd=='delete':
+        s['rules']=[x for x in rs if x['id']!=a.id]
+        for i,x in enumerate(sorted(s['rules'],key=lambda z:z['order'])):x['order']=i
+        return apply(s)
+    if a.cmd=='move':
+        ordered=sorted(rs,key=lambda x:x['order']);i=ordered.index(r);j=max(0,min(len(ordered)-1,i+a.delta));ordered[i],ordered[j]=ordered[j],ordered[i]
+        for n,x in enumerate(ordered):x['order']=n
+        s['rules']=ordered;return apply(s)
+
+ap=argparse.ArgumentParser();sp=ap.add_subparsers(dest='cmd',required=True);sp.add_parser('list')
+a=sp.add_parser('add');a.add_argument('--type',required=True);a.add_argument('--payload',required=True);a.add_argument('--target',required=True);a.add_argument('--note')
+for cmd in ['edit','delete','move']:
+ a=sp.add_parser(cmd);a.add_argument('--id',required=True)
+ if cmd=='edit':a.add_argument('--type');a.add_argument('--payload');a.add_argument('--target');a.add_argument('--enabled',choices=['true','false']);a.add_argument('--note')
+ if cmd=='move':a.add_argument('--delta',type=int,choices=[-1,1],required=True)
+a=ap.parse_args()
+try: print(json.dumps(main(a),ensure_ascii=False))
+except Exception as e: print(json.dumps({'ok':False,'error':str(e)},ensure_ascii=False));sys.exit(1)

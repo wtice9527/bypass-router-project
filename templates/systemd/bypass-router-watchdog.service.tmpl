@@ -1,0 +1,9 @@
+[Unit]
+Description=Bypass Router health watchdog
+After=network-online.target mihomo.service mosdns.service adguardhome.service
+
+[Service]
+Type=oneshot
+Environment=WATCHDOG_FAILURE_THRESHOLD={{WATCHDOG_FAILURE_THRESHOLD}}
+Environment=WATCHDOG_COOLDOWN_SECONDS={{WATCHDOG_COOLDOWN_SECONDS}}
+ExecStart=/usr/local/sbin/bypass-router-watchdog

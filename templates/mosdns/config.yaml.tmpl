@@ -1,0 +1,52 @@
+log:
+  level: info
+  file: /var/log/bypass-router/mosdns.log
+api:
+  http: 127.0.0.1:9091
+plugins:
+  - tag: geosite_cn
+    type: domain_set
+    args:
+      files: [/etc/bypass-router/mosdns/geodata/geosite_cn.txt]
+  - tag: privacy_cache
+    type: cache
+    args: {size: 20000, lazy_cache_ttl: 86400}
+  - tag: forward_global_encrypted
+    type: forward
+    args:
+      concurrent: 2
+      socks5: 127.0.0.1:{{MIHOMO_MIXED_PORT}}
+      upstreams:
+{{GLOBAL_DOH}}
+  - tag: forward_cn_encrypted
+    type: forward
+    args:
+      concurrent: 2
+      upstreams:
+{{DOMESTIC_DOH}}
+  - tag: cn_sequence
+    type: sequence
+    args:
+      - exec: $forward_cn_encrypted
+  - tag: foreign_sequence
+    type: sequence
+    args:
+      - exec: prefer_ipv4
+      - exec: $forward_global_encrypted
+  - tag: main_sequence
+    type: sequence
+    args:
+      - exec: $privacy_cache
+      - matches: has_resp
+        exec: accept
+      - matches: qname $geosite_cn
+        exec: $cn_sequence
+      - matches: has_resp
+        exec: accept
+      - exec: $foreign_sequence
+  - tag: dns_udp
+    type: udp_server
+    args: {entry: main_sequence, listen: '127.0.0.1:{{MOSDNS_PORT}}'}
+  - tag: dns_tcp
+    type: tcp_server
+    args: {entry: main_sequence, listen: '127.0.0.1:{{MOSDNS_PORT}}'}

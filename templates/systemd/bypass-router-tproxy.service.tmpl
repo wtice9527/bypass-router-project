@@ -1,0 +1,20 @@
+[Unit]
+Description=旁路由TCP Redirect与UDP TProxy
+After=network-online.target mihomo.service adguardhome.service bypass-router-input-guard.service
+Wants=network-online.target mihomo.service adguardhome.service bypass-router-input-guard.service
+PartOf=mihomo.service
+StartLimitIntervalSec=120
+StartLimitBurst=6
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/etc/bypass-router/scripts/tproxy-up
+ExecReload=/bin/sh -c '/etc/bypass-router/scripts/tproxy-down && /etc/bypass-router/scripts/tproxy-up'
+ExecStop=/etc/bypass-router/scripts/tproxy-down
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=50s
+
+[Install]
+WantedBy=multi-user.target

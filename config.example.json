@@ -1,0 +1,32 @@
+{
+  "interface": "eth0",
+  "router_ipv4": "192.168.50.2",
+  "lan_cidr": "192.168.50.0/24",
+  "upstream_gateway": "192.168.50.1",
+  "web_bind": "0.0.0.0",
+  "web_port": 8443,
+  "mihomo_mixed_port": 7890,
+  "mihomo_redir_port": 7892,
+  "mihomo_tproxy_port": 7893,
+  "mihomo_dns_port": 1053,
+  "mihomo_controller_port": 9090,
+  "mosdns_port": 5335,
+  "adguard_web_port": 3000,
+  "fwmark": "0x1/0x1",
+  "fwmark_value": "0x1",
+  "route_table": 100,
+  "route_priority": 100,
+  "strict_dns": true,
+  "domestic_doh": [
+    "https://dns.alidns.com/dns-query",
+    "https://doh.pub/dns-query"
+  ],
+  "global_doh": [
+    "https://cloudflare-dns.com/dns-query",
+    "https://dns.google/dns-query"
+  ],
+  "proxy_health_url": "https://www.google.com/generate_204",
+  "watchdog_failure_threshold": 3,
+  "watchdog_cooldown_seconds": 900,
+  "enable_tailscale_access": true
+}

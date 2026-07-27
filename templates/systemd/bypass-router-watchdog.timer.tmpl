@@ -1,0 +1,11 @@
+[Unit]
+Description=Run bypass router watchdog every five minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=20s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,7 @@
+[Unit]
+Description=Refresh bypass router proxy subscriptions
+After=network-online.target mihomo.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/mihomo-provider-fetch

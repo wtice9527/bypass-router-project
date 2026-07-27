@@ -1,0 +1,29 @@
+[Unit]
+Description=Bypass Router Web Console
+After=network-online.target mihomo.service mosdns.service adguardhome.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/bypass-router-web
+EnvironmentFile=-/etc/bypass-router-web/web.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/bypass-router-web/venv/bin/gunicorn --workers 2 --threads 2 --bind {{WEB_BIND}}:{{WEB_PORT}} --access-logfile - --error-logfile - app:app
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/bypass-router-web /var/log/bypass-router /var/lib/bypass-router-watchdog /var/lib/mihomo /etc/bypass-router/mihomo /etc/bypass-router-web
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+nft delete table inet bypass_router 2>/dev/null || true
+while ip -4 rule del fwmark "{{FWMARK}}" table "{{ROUTE_TABLE}}" priority "{{ROUTE_PRIORITY}}" 2>/dev/null; do :; done
+ip -4 route flush table "{{ROUTE_TABLE}}" 2>/dev/null || true

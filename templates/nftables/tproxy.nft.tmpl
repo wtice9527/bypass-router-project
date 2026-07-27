@@ -1,0 +1,31 @@
+#!/usr/sbin/nft -f
+
+table inet bypass_router {
+  set bypass_ipv4 {
+    type ipv4_addr
+    flags interval
+    elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8,
+      169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24,
+      192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24,
+      203.0.113.0/24, 224.0.0.0/3 }
+  }
+  chain nat_prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname != "{{INTERFACE}}" return
+    ip saddr != {{LAN_CIDR}} return
+    ip saddr {{ROUTER_IPV4}} return
+    meta l4proto { tcp, udp } th dport 53 redirect to :53
+    ip daddr @bypass_ipv4 return
+    meta l4proto tcp counter redirect to :{{MIHOMO_REDIR_PORT}}
+  }
+  chain udp_tproxy {
+    type filter hook prerouting priority mangle; policy accept;
+    iifname != "{{INTERFACE}}" return
+    ip saddr != {{LAN_CIDR}} return
+    ip saddr {{ROUTER_IPV4}} return
+    meta l4proto != udp return
+    udp dport 53 return
+    ip daddr @bypass_ipv4 return
+    meta l4proto udp tproxy ip to :{{MIHOMO_TPROXY_PORT}} meta mark set {{FWMARK_VALUE}} counter accept
+  }
+}

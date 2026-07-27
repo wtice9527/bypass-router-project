@@ -1,0 +1,17 @@
+config.json
+secrets.json
+secrets.*.json
+.env
+.env.*
+*.bak
+*.backup
+build/
+dist/
+release/*.tar.gz
+release/*.sha256
+*.egg-info/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env

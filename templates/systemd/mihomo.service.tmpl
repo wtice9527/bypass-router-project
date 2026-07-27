@@ -1,0 +1,14 @@
+[Unit]
+Description=Mihomo 透明代理核心
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mihomo -d /var/lib/mihomo -f /etc/bypass-router/mihomo/config.yaml
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

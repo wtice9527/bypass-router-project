@@ -1,0 +1,18 @@
+[Unit]
+Description=MosDNS 加密DNS转发
+After=network-online.target mihomo.service
+Wants=network-online.target mihomo.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mosdns start -c /etc/bypass-router/mosdns/config.yaml
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/log/bypass-router
+
+[Install]
+WantedBy=multi-user.target

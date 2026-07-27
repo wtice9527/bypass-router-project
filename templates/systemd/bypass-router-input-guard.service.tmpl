@@ -1,0 +1,15 @@
+[Unit]
+Description=旁路由输入与转发防火墙
+Before=network.target
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/bypass-router/nftables/input-guard.nft
+ExecReload=/usr/sbin/nft -f /etc/bypass-router/nftables/input-guard.nft
+ExecStop=-/usr/sbin/nft delete table inet bypass_router_guard
+
+[Install]
+WantedBy=multi-user.target

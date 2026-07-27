@@ -1,0 +1,38 @@
+http:
+  address: 127.0.0.1:{{ADGUARD_WEB_PORT}}
+  session_ttl: 30d
+users: []
+auth_attempts: 5
+block_auth_min: 15
+language: zh-cn
+dns:
+  bind_hosts: [0.0.0.0]
+  port: 53
+  refuse_any: true
+  upstream_dns: ['127.0.0.1:{{MOSDNS_PORT}}']
+  bootstrap_dns: []
+  fallback_dns: []
+  upstream_mode: load_balance
+  cache_enabled: true
+  cache_size: 4194304
+  cache_optimistic: true
+  aaaa_disabled: false
+  enable_dnssec: false
+  upstream_timeout: 10s
+  serve_plain_dns: true
+querylog: {enabled: true, file_enabled: true, interval: 24h, size_memory: 1000}
+statistics: {enabled: true, interval: 24h}
+filters:
+  - enabled: true
+    url: https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
+    name: AdGuard DNS filter
+    id: 1
+whitelist_filters: []
+user_rules: []
+filtering:
+  blocking_ipv4: 0.0.0.0
+  blocking_ipv6: '::'
+  blocking_mode: default
+  filtering_enabled: true
+  filters_update_interval: 24
+schema_version: 32

@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install system validators
+        run: sudo apt-get update && sudo apt-get install -y nftables nodejs
+
+      - name: Install project
+        run: python -m pip install -e '.[test]'
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Scan for secrets
+        run: python scripts/scan-secrets.py
+
+      - name: Check project governance
+        run: python scripts/verify-governance.py
+
+      - name: Generate sanitized rootfs
+        run: routerctl generate -c config.example.json -o build/rootfs
+
+      - name: Check generated placeholders
+        run: |
+          if grep -R '{{[A-Z0-9_]*}}' build/rootfs; then
+            echo 'Unresolved template placeholders found'
+            exit 1
+          fi
+
+      - name: Check Python and JavaScript syntax
+        run: |
+          python -m py_compile routerctl/*.py assets/web/app.py assets/scripts/bypass-router-watchdog.py
+          node --check assets/web/static/app.js
+
+      - name: Validate nftables templates
+        run: |
+          sudo nft -c -f build/rootfs/etc/bypass-router/nftables/tproxy.nft
+          sudo nft -c -f build/rootfs/etc/bypass-router/nftables/input-guard.nft

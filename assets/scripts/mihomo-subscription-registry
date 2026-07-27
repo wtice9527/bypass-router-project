@@ -1,0 +1,159 @@
+#!/opt/bypass-router-web/venv/bin/python
+from __future__ import annotations
+import argparse, hashlib, ipaddress, json, os, re, shutil, socket, subprocess, sys, tempfile, time
+import urllib.parse, urllib.request
+from pathlib import Path
+import yaml
+
+ROOT=Path('/etc/bypass-router/mihomo/secrets')
+REG=ROOT/'subscriptions.json'
+LEGACY=ROOT/'provider-url'
+DATA=Path('/var/lib/mihomo/subscriptions')
+PROVIDER=Path('/var/lib/mihomo/providers/main.yaml')
+BACKUPS=Path('/var/lib/mihomo/subscription-backups')
+STATE=Path('/var/lib/mihomo/providers/main.state.json')
+PREFERRED=Path('/etc/bypass-router/mihomo/preferred-node.json')
+
+def atomic(path,data):
+    path.parent.mkdir(parents=True,exist_ok=True)
+    fd,tmp=tempfile.mkstemp(prefix='.'+path.name+'.',dir=str(path.parent));os.close(fd)
+    Path(tmp).write_bytes(data);os.chmod(tmp,0o600);os.replace(tmp,path)
+
+def valid_url(url):
+    u=urllib.parse.urlparse(url)
+    if u.scheme!='https' or not u.hostname or u.username or u.password: raise ValueError('只允许不含用户名密码的HTTPS订阅URL')
+    if len(url)>2048: raise ValueError('订阅URL过长')
+    return u
+
+def safe_url(url):
+    u=valid_url(url)
+    for info in socket.getaddrinfo(u.hostname,u.port or 443,type=socket.SOCK_STREAM):
+        ip=ipaddress.ip_address(info[4][0].split('%')[0])
+        if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+            raise ValueError('订阅地址解析到禁止的内网或保留地址')
+    return u
+
+class SafeRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,req,fp,code,msg,headers,newurl):
+        safe_url(urllib.parse.urljoin(req.full_url,newurl))
+        return super().redirect_request(req,fp,code,msg,headers,newurl)
+
+def preferred_order(raw):
+    d=yaml.safe_load(raw);proxies=d.get('proxies') if isinstance(d,dict) else None
+    if not isinstance(proxies,list):return raw
+    try:preferred=json.loads(PREFERRED.read_text()).get('preferred')
+    except Exception:preferred=None
+    if preferred:
+        first=[x for x in proxies if x.get('name')==preferred]
+        if first:d['proxies']=first+[x for x in proxies if x.get('name')!=preferred]
+    return yaml.safe_dump(d,allow_unicode=True,sort_keys=False).encode()
+
+def fetch(url):
+    safe_url(url)
+    op=urllib.request.build_opener(urllib.request.ProxyHandler({'http':'http://127.0.0.1:7890','https':'http://127.0.0.1:7890'}),SafeRedirect())
+    req=urllib.request.Request(url,headers={'User-Agent':'clash.meta','Accept':'*/*'})
+    with op.open(req,timeout=35) as r: raw=r.read(10_000_001)
+    if len(raw)>10_000_000: raise ValueError('订阅文件过大')
+    return raw
+
+def parse(raw):
+    d=yaml.safe_load(raw); p=d.get('proxies') if isinstance(d,dict) else None
+    if not isinstance(p,list) or not p: raise ValueError('订阅未返回有效节点')
+    names=[]
+    for x in p:
+        if not isinstance(x,dict) or not x.get('name') or not x.get('type'): raise ValueError('存在无效节点')
+        names.append(str(x['name']))
+    if len(names)!=len(set(names)): raise ValueError('节点名称重复')
+    return names
+
+def load():
+    ROOT.mkdir(parents=True,exist_ok=True);os.chmod(ROOT,0o700);DATA.mkdir(parents=True,exist_ok=True);os.chmod(DATA,0o700)
+    if not REG.exists():
+        entries=[]
+        if LEGACY.exists() and LEGACY.read_text().strip():
+            url=LEGACY.read_text().strip();u=valid_url(url);sid=hashlib.sha256(url.encode()).hexdigest()[:12]
+            target=DATA/(sid+'.yaml')
+            if PROVIDER.exists(): shutil.copy2(PROVIDER,target);os.chmod(target,0o600)
+            entries=[{'id':sid,'name':'当前订阅','url':url,'enabled':True,'active':True,'order':0,'host':u.hostname,'updated_at':None,'proxy_count':len(parse(target.read_bytes())) if target.exists() else 0}]
+        save(entries)
+    return json.loads(REG.read_text()).get('subscriptions',[])
+
+def save(entries):
+    atomic(REG,(json.dumps({'subscriptions':entries},ensure_ascii=False,indent=2)+'\n').encode())
+
+def public(e):
+    return {k:e.get(k) for k in ['id','name','enabled','active','order','host','updated_at','proxy_count','last_error']}
+
+def get(entries,sid):
+    x=next((x for x in entries if x['id']==sid),None)
+    if not x: raise ValueError('订阅不存在')
+    return x
+
+def download(e):
+    raw=preferred_order(fetch(e['url']));names=parse(raw);atomic(DATA/(e['id']+'.yaml'),raw);e['proxy_count']=len(names);e['updated_at']=time.strftime('%Y-%m-%dT%H:%M:%S%z');e['last_error']='';return names
+
+def activate(entries,e):
+    f=DATA/(e['id']+'.yaml')
+    if not f.exists(): download(e)
+    raw=preferred_order(f.read_bytes());parse(raw);BACKUPS.mkdir(parents=True,exist_ok=True);stamp=time.strftime('%Y%m%d-%H%M%S');b=BACKUPS/stamp;b.mkdir(mode=0o700)
+    if PROVIDER.exists():shutil.copy2(PROVIDER,b/'main.yaml')
+    old=next((x for x in entries if x.get('active')),None)
+    try:
+        atomic(PROVIDER,raw);r=subprocess.run(['curl','-fsS','-X','PUT','http://127.0.0.1:9090/providers/proxies/main'],timeout=15)
+        if r.returncode:raise RuntimeError('Mihomo加载失败')
+        time.sleep(2);r=subprocess.run(['curl','-4','-sS','-x','http://127.0.0.1:7890','--max-time','12','-o','/dev/null','-w','%{http_code}','https://www.google.com'],text=True,stdout=subprocess.PIPE)
+        if r.returncode or not r.stdout.startswith(('2','3')):raise RuntimeError('Google验证失败')
+        for x in entries:x['active']=x['id']==e['id']
+        atomic(LEGACY,(e['url']+'\n').encode());STATE.write_text(json.dumps({'ok':True,'proxy_count':e['proxy_count'],'subscription_id':e['id'],'subscription_host':e['host']},ensure_ascii=False)+'\n');os.chmod(STATE,0o600)
+    except Exception:
+        if (b/'main.yaml').exists():shutil.copy2(b/'main.yaml',PROVIDER);subprocess.run(['curl','-fsS','-X','PUT','http://127.0.0.1:9090/providers/proxies/main'],timeout=15)
+        raise
+    return stamp
+
+def main(a):
+    es=load()
+    if a.cmd=='list':return {'subscriptions':[public(x) for x in sorted(es,key=lambda z:z.get('order',0))]}
+    if a.cmd=='add':
+        if not a.name.strip():raise ValueError('名称不能为空')
+        u=safe_url(a.url);raw=preferred_order(fetch(a.url));names=parse(raw);sid=hashlib.sha256((a.url+str(time.time())).encode()).hexdigest()[:12]
+        e={'id':sid,'name':a.name.strip()[:80],'url':a.url,'enabled':True,'active':False,'order':len(es),'host':u.hostname,'updated_at':time.strftime('%Y-%m-%dT%H:%M:%S%z'),'proxy_count':len(names),'last_error':''};atomic(DATA/(sid+'.yaml'),raw);es.append(e);save(es);return public(e)
+    e=get(es,a.id) if hasattr(a,'id') else None
+    if a.cmd=='update':
+        try:download(e)
+        except Exception as ex:e['last_error']=str(ex);save(es);raise
+        if e.get('active'):activate(es,e)
+        save(es);return public(e)
+    if a.cmd=='activate':stamp=activate(es,e);save(es);r=public(e);r['backup']=stamp;return r
+    if a.cmd=='edit':
+        if a.name:e['name']=a.name.strip()[:80]
+        if a.url:
+            u=safe_url(a.url);raw=preferred_order(fetch(a.url));names=parse(raw);e['url']=a.url;e['host']=u.hostname;e['proxy_count']=len(names);e['updated_at']=time.strftime('%Y-%m-%dT%H:%M:%S%z');atomic(DATA/(e['id']+'.yaml'),raw)
+        if a.enabled is not None:e['enabled']=a.enabled=='true'
+        save(es);return public(e)
+    if a.cmd=='delete':
+        if e.get('active'):raise ValueError('不能删除当前活动订阅')
+        es=[x for x in es if x['id']!=e['id']];(DATA/(e['id']+'.yaml')).unlink(missing_ok=True);save(es);return {'ok':True}
+    if a.cmd=='move':
+        ordered=sorted(es,key=lambda z:z.get('order',0));i=ordered.index(e);j=max(0,min(len(ordered)-1,i+a.delta));ordered[i],ordered[j]=ordered[j],ordered[i]
+        for n,x in enumerate(ordered):x['order']=n
+        save(ordered);return {'ok':True}
+    if a.cmd=='update-all':
+        result=[]
+        for x in es:
+            if not x.get('enabled'):continue
+            try:download(x);result.append({'id':x['id'],'ok':True,'proxy_count':x['proxy_count']})
+            except Exception as ex:x['last_error']=str(ex);result.append({'id':x['id'],'ok':False})
+        active=next((x for x in es if x.get('active')),None)
+        if active and (DATA/(active['id']+'.yaml')).exists():activate(es,active)
+        save(es);return {'results':result}
+
+ap=argparse.ArgumentParser();sp=ap.add_subparsers(dest='cmd',required=True)
+sp.add_parser('list');
+for c in ['update','activate','delete']:
+ q=sp.add_parser(c);q.add_argument('--id',required=True)
+q=sp.add_parser('add');q.add_argument('--name',required=True);q.add_argument('--url',required=True)
+q=sp.add_parser('edit');q.add_argument('--id',required=True);q.add_argument('--name');q.add_argument('--url');q.add_argument('--enabled',choices=['true','false'])
+q=sp.add_parser('move');q.add_argument('--id',required=True);q.add_argument('--delta',type=int,choices=[-1,1],required=True)
+sp.add_parser('update-all');a=ap.parse_args()
+try:print(json.dumps(main(a),ensure_ascii=False))
+except Exception as e:print(json.dumps({'ok':False,'error':str(e)},ensure_ascii=False));sys.exit(1)
