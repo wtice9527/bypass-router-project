@@ -5,6 +5,7 @@
   "upstream_gateway": "192.168.50.1",
   "web_bind": "0.0.0.0",
   "web_port": 8443,
+  "ssh_port": 22,
   "mihomo_mixed_port": 7890,
   "mihomo_redir_port": 7892,
   "mihomo_tproxy_port": 7893,
@@ -28,5 +29,11 @@
   "proxy_health_url": "https://www.google.com/generate_204",
   "watchdog_failure_threshold": 3,
   "watchdog_cooldown_seconds": 900,
-  "enable_tailscale_access": true
+  "enable_tailscale_access": true,
+  "manage_network": false,
+  "network_connection": "",
+  "install_dependencies": true,
+  "install_mihomo": true,
+  "install_mosdns": true,
+  "install_adguardhome": true
 }

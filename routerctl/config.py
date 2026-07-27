@@ -12,6 +12,7 @@ DEFAULTS = {
     "upstream_gateway": "192.168.50.1",
     "web_bind": "0.0.0.0",
     "web_port": 8443,
+    "ssh_port": 22,
     "mihomo_mixed_port": 7890,
     "mihomo_redir_port": 7892,
     "mihomo_tproxy_port": 7893,
@@ -30,6 +31,12 @@ DEFAULTS = {
     "watchdog_failure_threshold": 3,
     "watchdog_cooldown_seconds": 900,
     "enable_tailscale_access": True,
+    "manage_network": False,
+    "network_connection": "",
+    "install_dependencies": True,
+    "install_mihomo": True,
+    "install_mosdns": True,
+    "install_adguardhome": True,
 }
 
 SECRET_KEYS = {"subscription_url", "web_admin_password"}
@@ -87,6 +94,13 @@ def validate(c: dict) -> None:
         raise ValueError("旁路由地址无效或与上游网关冲突")
     if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,15}", str(c["interface"])):
         raise ValueError("网络接口名称无效")
+    if not isinstance(c.get("manage_network"), bool):
+        raise ValueError("manage_network 必须为布尔值")
+    if c.get("network_connection") and any(x in str(c["network_connection"]) for x in "\r\n"):
+        raise ValueError("NetworkManager 连接名称无效")
+    for key in ("install_dependencies", "install_mihomo", "install_mosdns", "install_adguardhome"):
+        if not isinstance(c.get(key), bool):
+            raise ValueError(f"{key} 必须为布尔值")
     try:
         bind = ipaddress.ip_address(c["web_bind"])
         if bind.version != 4:
@@ -96,7 +110,7 @@ def validate(c: dict) -> None:
     port_keys = (
         "web_port", "mihomo_mixed_port", "mihomo_redir_port",
         "mihomo_tproxy_port", "mihomo_dns_port", "mihomo_controller_port",
-        "mosdns_port", "adguard_web_port",
+        "mosdns_port", "adguard_web_port", "ssh_port",
     )
     ports = [int(c[k]) for k in port_keys]
     if len(set(ports)) != len(ports) or any(not 1 <= p <= 65535 for p in ports):
@@ -141,6 +155,12 @@ def template_values(c: dict) -> dict[str, str]:
             values[upper] = "\n".join(f"        - addr: {item}" for item in value)
         else:
             values[upper] = str(value)
+    if c.get("enable_tailscale_access"):
+        values["TAILSCALE_INPUT_RULES"] = '    iifname "tailscale0" accept\n    udp dport 41641 accept'
+        values["TAILSCALE_FORWARD_RULES"] = '    iifname "tailscale0" accept\n    oifname "tailscale0" accept'
+    else:
+        values["TAILSCALE_INPUT_RULES"] = ""
+        values["TAILSCALE_FORWARD_RULES"] = ""
     return values
 
 

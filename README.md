@@ -24,13 +24,22 @@
 
 ## 快速开始
 
+推荐在干净 Debian 13 主机直接运行交互部署：
+
 ```bash
-git clone https://github.com/YOUR_GITHUB_USER/bypass-router-project.git
+git clone https://github.com/wtice9527/bypass-router-project.git
 cd bypass-router-project
+sudo ./install.sh
+```
+
+向导会自动探测接口、本机 IPv4、LAN 网段和上游网关，并询问 Web/SSH 端口、加密 DNS、订阅 URL、管理密码、Watchdog 策略，以及是否由 NetworkManager 配置本机静态 IP。完整说明见 [`docs/INTERACTIVE_INSTALL.md`](docs/INTERACTIVE_INSTALL.md)。
+
+只生成配置、不安装系统：
+
+```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .
-cp config.example.json config.json
-cp secrets.example.json secrets.json
+.venv/bin/routerctl wizard
 ```
 
 编辑 `config.json` 和 `secrets.json` 后：
@@ -86,6 +95,7 @@ sudo .venv/bin/routerctl install -c config.json -s secrets.json --yes
 | `rollback` | 恢复指定或最近备份 |
 | `uninstall` | 仅删除 manifest 管理的文件，保留可恢复备份 |
 | `status` | 检查安装版本、文件漂移和服务状态 |
+| `wizard` | 交互收集网络、DNS、代理、Web 和秘密参数，可选择直接安装 |
 
 生产写入失败时，安装器会删除本次新写文件并恢复备份。
 

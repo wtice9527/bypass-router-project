@@ -6,14 +6,13 @@ table inet bypass_router_guard {
     iifname "lo" accept
     ct state established,related accept
     ct state invalid drop
-    iifname "tailscale0" accept
-    udp dport 41641 accept
+{{TAILSCALE_INPUT_RULES}}
     iifname "{{INTERFACE}}" ip6 nexthdr ipv6-icmp accept
     iifname "{{INTERFACE}}" udp sport 547 udp dport 546 accept
     iifname "{{INTERFACE}}" ip saddr {{LAN_CIDR}} meta mark 0x1 accept
     iifname "{{INTERFACE}}" ip saddr {{LAN_CIDR}} ct status dnat accept
     iifname "{{INTERFACE}}" ip saddr {{LAN_CIDR}} meta l4proto { tcp, udp } th dport 53 accept
-    iifname "{{INTERFACE}}" ip saddr {{LAN_CIDR}} tcp dport { 22, {{WEB_PORT}} } accept
+    iifname "{{INTERFACE}}" ip saddr {{LAN_CIDR}} tcp dport { {{SSH_PORT}}, {{WEB_PORT}} } accept
     iifname "{{INTERFACE}}" meta l4proto { tcp, udp } th dport { {{MIHOMO_DNS_PORT}}, {{MIHOMO_MIXED_PORT}}, {{MIHOMO_REDIR_PORT}}, {{MIHOMO_TPROXY_PORT}} } reject
     iifname "{{INTERFACE}}" tcp dport 9090 reject
   }
@@ -22,7 +21,6 @@ table inet bypass_router_guard {
     ct state established,related accept
     ct state invalid drop
     iifname "{{INTERFACE}}" oifname "{{INTERFACE}}" ip saddr {{LAN_CIDR}} accept
-    iifname "tailscale0" accept
-    oifname "tailscale0" accept
+{{TAILSCALE_FORWARD_RULES}}
   }
 }

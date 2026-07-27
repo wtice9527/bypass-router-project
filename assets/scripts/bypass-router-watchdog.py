@@ -149,7 +149,7 @@ def assess() -> list[str]:
         faults.append("Google 代理访问失败")
     if tproxy_enabled() and not tproxy_healthy():
         faults.append("透明代理规则/策略路由不完整")
-    if not active("tailscaled"):
+    if os.environ.get("BYPASS_ROUTER_ALLOW_TAILSCALE", "true").lower() == "true" and not active("tailscaled"):
         faults.append("Tailscale 未运行")
     return faults
 
@@ -163,7 +163,7 @@ def repair(initial: list[str]) -> list[str]:
         restart("NetworkManager", actions)
         time.sleep(3)
 
-    if not active("tailscaled"):
+    if os.environ.get("BYPASS_ROUTER_ALLOW_TAILSCALE", "true").lower() == "true" and not active("tailscaled"):
         restart("tailscaled", actions)
 
     # Dependency order: proxy DNS -> policy DNS -> LAN DNS frontend.

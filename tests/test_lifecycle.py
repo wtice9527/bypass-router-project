@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from routerctl.cli import apply, rollback, status, uninstall
+from routerctl.cli import apply, rollback, status, uninstall, stop_managed_services
 
 ROOT = Path(__file__).parents[1]
 
@@ -26,6 +26,10 @@ def test_isolated_install_upgrade_rollback_uninstall(tmp_path, capsys):
     data = json.loads(manifest.read_text())
     assert data["version"] == (ROOT / "VERSION").read_text().strip()
     assert (prefix / "etc/bypass-router/mihomo/config.yaml").exists()
+    assert (prefix / "var/lib/mihomo/providers/main.yaml").read_text() == "proxies: []\n"
+    assert (prefix / "var/lib/adguardhome").is_dir()
+    assert (prefix / "var/log/bypass-router").is_dir()
+    assert not (prefix / "etc/bypass-router/mihomo/providers/main.yaml").exists()
     assert (prefix / "opt/bypass-router-web/app.py").exists()
     assert (prefix / "etc/bypass-router/mihomo/secrets/provider-url").stat().st_mode & 0o777 == 0o600
 
@@ -63,3 +67,12 @@ def test_release_makefile_excludes_local_secret_files():
     makefile = (ROOT / "Makefile").read_text()
     for value in ("./config.json", "./secrets.json", "./.env", "./.env.*"):
         assert value in makefile
+
+
+def test_failure_cleanup_stops_units_before_file_restore(monkeypatch):
+    calls = []
+    monkeypatch.setattr("routerctl.cli.run", lambda cmd, check=True, timeout=120: calls.append(cmd))
+    stop_managed_services(Path("/"))
+    assert ["systemctl", "stop", "bypass-router-tproxy.service"] in calls
+    assert ["systemctl", "stop", "bypass-router-input-guard.service"] in calls
+    assert ["systemctl", "stop", "bypass-router-watchdog.timer"] in calls

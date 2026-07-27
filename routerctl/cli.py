@@ -58,9 +58,24 @@ def prepare_stage(config_path: str, secrets_path: str | None, require_secrets: b
     stage = Path(td.name)
     render_tree(ROOT / "templates", stage / "rendered", config)
 
-    provider = stage / "rendered/mihomo/providers/main.yaml"
+    provider = stage / "rootfs/var/lib/mihomo/providers/main.yaml"
     provider.parent.mkdir(parents=True, exist_ok=True)
     provider.write_text("proxies: []\n")
+    os.chmod(provider, 0o600)
+
+    for directory in (
+        stage / "rootfs/var/lib/mihomo/subscriptions",
+        stage / "rootfs/var/lib/mihomo/subscription-candidates",
+        stage / "rootfs/var/lib/mihomo/subscription-backups",
+        stage / "rootfs/var/lib/mihomo/rule-backups",
+        stage / "rootfs/var/lib/mihomo/preferred-backups",
+        stage / "rootfs/var/lib/adguardhome",
+        stage / "rootfs/var/log/bypass-router",
+        stage / "rootfs/var/lib/bypass-router-watchdog",
+        stage / "rootfs/run/bypass-router-web",
+        stage / "rootfs/run/bypass-router-watchdog",
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
 
     web = stage / "rootfs/opt/bypass-router-web"
     shutil.copytree(ROOT / "assets/web", web)
@@ -98,6 +113,7 @@ def stage_mapping(stage: Path) -> list[tuple[Path, Path, int]]:
         "nftables": Path("etc/bypass-router/nftables"),
         "scripts": Path("etc/bypass-router/scripts"),
         "web": Path("etc/bypass-router-web"),
+        "sysctl": Path("etc/sysctl.d"),
     }
     for section, target in sections.items():
         src_root = stage / "rendered" / section
@@ -121,6 +137,17 @@ def stage_mapping(stage: Path) -> list[tuple[Path, Path, int]]:
     return mapping
 
 
+def stage_directories(stage: Path) -> list[tuple[Path, int]]:
+    rootfs = stage / "rootfs"
+    if not rootfs.exists():
+        return []
+    result = []
+    for src in rootfs.rglob("*"):
+        if src.is_dir() and not any(src.iterdir()):
+            result.append((src.relative_to(rootfs), 0o700 if str(src.relative_to(rootfs)).startswith(("var/lib", "run")) else 0o755))
+    return result
+
+
 def validate_stage(config_path: str, secrets_path: str | None = None) -> None:
     config, _, td, stage = prepare_stage(config_path, secrets_path, False)
     try:
@@ -129,7 +156,12 @@ def validate_stage(config_path: str, secrets_path: str | None = None) -> None:
             run(["nft", "-c", "-f", str(nft)])
         mihomo = shutil.which("mihomo") or "/usr/local/bin/mihomo"
         if Path(mihomo).exists():
-            run([mihomo, "-t", "-d", str(rendered / "mihomo"), "-f", str(rendered / "mihomo/config.yaml")])
+            validation_data = stage / "validation-mihomo"
+            validation_data.mkdir(parents=True, exist_ok=True)
+            providers = validation_data / "providers"
+            providers.mkdir(parents=True, exist_ok=True)
+            (providers / "main.yaml").write_text("proxies: []\n")
+            run([mihomo, "-t", "-d", str(validation_data), "-f", str(rendered / "mihomo/config.yaml")])
         mosdns = shutil.which("mosdns") or "/usr/local/bin/mosdns"
         if Path(mosdns).exists():
             run([mosdns, "check", "-c", str(rendered / "mosdns/config.yaml")], check=False)
@@ -194,6 +226,17 @@ def remove_files(prefix: Path, rels: list[Path]) -> None:
         prefix_path(prefix, rel).unlink(missing_ok=True)
 
 
+def stop_managed_services(prefix: Path) -> None:
+    if prefix != Path("/"):
+        return
+    for unit in (
+        "bypass-router-watchdog.timer", "bypass-router-provider-update.timer",
+        "bypass-router-tproxy.service", "bypass-router-input-guard.service",
+        "bypass-router-web.service", "adguardhome.service", "mosdns.service", "mihomo.service",
+    ):
+        run(["systemctl", "stop", unit], False)
+
+
 def write_manifest(prefix: Path, version: str, entries: list[dict], backup: Path | None) -> None:
     path = prefix_path(prefix, MANIFEST.relative_to("/"))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -217,12 +260,17 @@ def apply(config_path: str, secrets_path: str, prefix: str, yes: bool, action: s
     config, _, td, stage = prepare_stage(config_path, secrets_path, True)
     version = (ROOT / "VERSION").read_text().strip()
     mapping = stage_mapping(stage)
+    directories = stage_directories(stage)
     old = current_manifest(target_prefix)
     old_rels = [Path(x["path"]) for x in old.get("files", [])]
     new_rels = [rel for _, rel, _ in mapping]
     backup = backup_existing(target_prefix, old_rels + new_rels, old.get("version", "unmanaged"))
     installed: list[dict] = []
     try:
+        for rel, mode in directories:
+            directory = prefix_path(target_prefix, rel)
+            directory.mkdir(parents=True, exist_ok=True)
+            os.chmod(directory, mode)
         for src, rel, mode in mapping:
             dst = prefix_path(target_prefix, rel)
             copy_file(src, dst, mode)
@@ -238,14 +286,22 @@ def apply(config_path: str, secrets_path: str, prefix: str, yes: bool, action: s
                 run([sys.executable, "-m", "venv", str(venv)])
             run([str(venv / "bin/pip"), "install", "-r", "/opt/bypass-router-web/requirements.txt"], timeout=300)
             run(["systemctl", "daemon-reload"])
+            run(["sysctl", "--system"])
             for unit in UNITS:
                 run(["systemctl", "enable", unit], False)
             for unit in ["mihomo", "mosdns", "adguardhome", "bypass-router-input-guard", "bypass-router-tproxy", "bypass-router-web"]:
                 run(["systemctl", "restart", unit])
             run(["systemctl", "start", "bypass-router-watchdog.timer", "bypass-router-provider-update.timer"], False)
+            subscription = json.loads(Path(secrets_path).read_text())["subscription_url"]
+            preview = run(["/usr/local/sbin/mihomo-subscription-manage", "preview", "--url", subscription])
+            token = json.loads(preview.stdout).get("token")
+            if not token:
+                raise RuntimeError("订阅预检未返回确认令牌")
+            run(["/usr/local/sbin/mihomo-subscription-manage", "apply", "--token", token], timeout=120)
         write_manifest(target_prefix, version, installed, backup)
         print(f"{action}完成；版本 {version}；备份 {backup}")
     except Exception:
+        stop_managed_services(target_prefix)
         remove_files(target_prefix, [Path(x["path"]) for x in installed])
         restore_backup(target_prefix, backup)
         raise
@@ -341,6 +397,13 @@ def main() -> None:
             p.add_argument("-s", "--secrets")
         else:
             p.add_argument("-o", "--output", default="build/rootfs")
+    p = sub.add_parser("wizard")
+    p.add_argument("-c", "--config", default="config.json")
+    p.add_argument("-s", "--secrets", default="secrets.json")
+    p.add_argument("--install", action="store_true")
+    p.add_argument("--bootstrap", action="store_true", help="安装缺失的系统依赖和核心二进制")
+    p.add_argument("--prefix", default="/")
+    p.add_argument("--yes", action="store_true")
     for name in ("install", "upgrade"):
         p = sub.add_parser(name)
         p.add_argument("-c", "--config", default="config.json")
@@ -369,6 +432,9 @@ def main() -> None:
         uninstall(args.prefix, args.yes)
     elif args.cmd == "status":
         status(args.prefix)
+    elif args.cmd == "wizard":
+        from .wizard import run_wizard
+        run_wizard(args.config, args.secrets, args.install, args.yes, args.prefix, args.bootstrap)
 
 
 if __name__ == "__main__":
