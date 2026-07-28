@@ -60,6 +60,14 @@ sudo ./install.sh
 
 完整流程与风险说明见：[交互部署指南](docs/INTERACTIVE_INSTALL.md)。
 
+## Web 管理控制台
+
+部署完成后，可通过 Web 控制台管理节点、订阅、规则、AdGuard、服务、透明代理与诊断。
+
+![旁路由控制台登录页](docs/screenshots/web-login.png)
+
+> 示例截图不包含真实密码、订阅、节点、IP 地址或流量数据。控制台地址为 `http://旁路由IP:Web端口`。
+
 ## 部署后：让客户端使用旁路由
 
 安装成功不代表客户端已经走旁路由。需要在目标客户端手动设置：
