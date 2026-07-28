@@ -69,6 +69,24 @@ def test_release_makefile_excludes_local_secret_files():
         assert value in makefile
 
 
+def test_installed_web_unit_loads_rendered_lan_access_scope(tmp_path):
+    prefix = tmp_path / "rootfs"
+    secrets = make_secrets(tmp_path)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({
+        "router_ipv4": "192.168.88.2",
+        "lan_cidr": "192.168.88.0/24",
+        "upstream_gateway": "192.168.88.1",
+        "enable_tailscale_access": False,
+    }))
+    apply(str(config_path), str(secrets), str(prefix), True, "install")
+    web_env = (prefix / "etc/bypass-router-web/web.env").read_text()
+    unit = (prefix / "etc/systemd/system/bypass-router-web.service").read_text()
+    assert "BYPASS_ROUTER_LAN_CIDR=192.168.88.0/24" in web_env
+    assert "BYPASS_ROUTER_ALLOW_TAILSCALE=false" in web_env
+    assert "EnvironmentFile=-/etc/bypass-router-web/web.env" in unit
+
+
 def test_failure_cleanup_stops_units_before_file_restore(monkeypatch):
     calls = []
     monkeypatch.setattr("routerctl.cli.run", lambda cmd, check=True, timeout=120: calls.append(cmd))
