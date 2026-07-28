@@ -6,15 +6,57 @@
 
 [![CI](https://github.com/wtice9527/bypass-router-project/actions/workflows/ci.yml/badge.svg)](https://github.com/wtice9527/bypass-router-project/actions/workflows/ci.yml)
 
-## 它解决什么问题
+## 核心优势
 
-- 把一台 Debian 主机部署为**旁路由**，而不是修改主路由；
-- LAN 客户端可按需把 IPv4 网关和 DNS 指向旁路由；
-- 国内 DNS 使用加密国内 DoH，全球 DNS 经 Mihomo 使用加密 DoH；**不提供公网明文 53 fallback**；
+### 1. 降低旁路由部署与维护门槛
+
+- 通过交互向导填写接口、网段、本机 IP、上游网关、订阅和 Web 密码，无需从零拼装 Mihomo、MosDNS、AdGuard Home、nftables 与 systemd；
+- 缺失的核心组件、运行/状态目录、服务与定时任务可由安装器自动准备；
+- 提供 Web 控制台管理节点、订阅、规则、AdGuard、服务、透明代理与诊断；
+- 提供 `validate`、`generate`、`install`、`upgrade`、`rollback`、`uninstall`、`status` 等完整生命周期入口。
+
+### 2. Hermes AI 辅助运维：让排障有上下文、有证据
+
+Hermes 可以作为**可选的辅助运维控制面**：读取当前配置、服务、nftables、策略路由和近期日志，结合真实 DNS、国内站点、Google 代理、TCP/UDP TProxy 数据平面测试定位问题；在获得授权后执行先备份、先校验、可回滚的维护操作。
+
+这意味着日常维护不必完全依赖手工记忆命令和配置位置，尤其适合订阅异常、节点更新、DNS/规则问题、广告误杀、服务依赖或 TProxy 异常的排查。Hermes 不替代管理员和带外恢复通道；它的结论仍应以实时系统状态和实际数据平面验证为准。详见：[使用 Hermes 管理与维护旁路由](docs/HERMES_OPERATIONS.md)。
+
+### 3. 对可识别的小故障进行受控自我修复
+
+Watchdog 定期检查核心服务、直连网络、国内/全球 DNS、严格 DNS 配置、Google 代理、TProxy 和可选的 Tailscale 状态。发现可恢复问题时，会按依赖顺序尝试重启必要组件并再次验证：
+
+- 单次 Google 代理失败只记录，不立即重启；
+- 连续失败达到阈值（默认 3 次）才尝试修复；
+- 修复后进入冷却期（默认 900 秒），避免重复重启；
+- 修复结果会再次执行检查，未恢复会明确报告为未完全成功。
+
+这不是“无条件自动修复”：网络拓扑、主路由 DHCP、LAN 地址、上游网关、大范围防火墙放行和其他高影响变更不应自动执行。
+
+### 4. 从设计上降低 DNS 泄露风险
+
+- 国内域名使用加密国内 DoH；全球域名通过 Mihomo 使用加密 DoH；
+- 公网 DNS 上游只允许 DoH/DoT，**不配置公网 UDP/TCP 53 fallback**；
+- AdGuard Home 只转发到本地 MosDNS，没有独立公网 fallback；
+- nftables 接管目标 LAN 客户端的 DNS 53 流量，降低客户端自行指定明文 DNS 绕过的概率；
+- 配置与 Watchdog 均检查严格 DNS 不变量；上游不可用时应失败关闭，而不是静默降级到明文 DNS。
+
+> DNS 泄露防护的前提是客户端实际使用旁路由作为网关/DNS，且未自行启用浏览器 Secure DNS、Android 私人 DNS、IPv6 旁路或独立应用代理。部署后应在客户端侧进行泄露检测和实际验证。
+
+### 5. 稳定性与可恢复性
+
 - TCP 使用 Redirect、UDP 使用 TProxy；
-- 提供节点、订阅、规则、AdGuard、服务、透明代理与诊断的 Web 控制台；
-- 支持配置校验、生成、安装、升级、回滚、卸载与状态检查；
-- 发布目录不包含订阅、节点、Token、密码、私钥或原生产网络身份。
+- 常用节点健康时保持，故障后才切备用，恢复后可重新应用首选顺序；
+- 代理全部不可用时，用户流量可按策略临时回退 DIRECT；DNS 仍保持加密/fail-closed，两者不混淆；
+- 安装与升级记录 manifest、创建备份，支持回滚、卸载和文件漂移检查；
+- 发布前运行测试、敏感信息扫描、模板渲染与配置检查。
+
+### 6. 安全与隐私边界
+
+- 发布目录不包含订阅、节点、Token、密码、私钥或原生产网络身份；
+- `secrets.json` 与非秘密配置分离，创建时使用 `0600` 权限；
+- 订阅 URL 仅允许 HTTPS，并对重定向进行安全校验；
+- Mihomo Controller 仅监听回环；Web 写操作要求认证与 CSRF，外部数据进行 HTML 转义；
+- 项目不修改主路由 DHCP，也不会自动把全网设备切换到旁路由。
 
 ## 适用范围与前提
 
