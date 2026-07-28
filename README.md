@@ -106,9 +106,9 @@ sudo ./install.sh
 
 部署完成后，可通过 Web 控制台管理节点、订阅、规则、AdGuard、服务、透明代理与诊断。
 
-![旁路由控制台登录页](docs/screenshots/web-login.png)
+![旁路由控制台运行总览](docs/screenshots/web-overview.png)
 
-> 示例截图不包含真实密码、订阅、节点、IP 地址或流量数据。控制台地址为 `http://旁路由IP:Web端口`。
+> 脱敏示例：展示登录后的运行总览；不包含真实密码、订阅、节点、IP 地址、客户端身份或日志数据。控制台地址为 `http://旁路由IP:Web端口`。
 
 ## 部署后：让客户端使用旁路由
 

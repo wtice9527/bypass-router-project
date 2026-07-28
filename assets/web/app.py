@@ -31,7 +31,7 @@ SECRET_FILE = Path(os.environ.get("BYPASS_ROUTER_SECRET_FILE", "/etc/bypass-rout
 WATCHDOG = os.environ.get("BYPASS_ROUTER_WATCHDOG", "/usr/local/sbin/bypass-router-watchdog")
 SERVICES = [
     "mihomo", "mosdns", "adguardhome", "bypass-router-tproxy",
-    "bypass-router-input-guard", "tailscaled", "NetworkManager",
+    "bypass-router-input-guard", "NetworkManager",
 ]
 ALLOWED_ACTIONS = {
     "repair": [WATCHDOG],
@@ -427,9 +427,6 @@ def status():
     p_ok, p_details = privacy_config()
     data = {
         "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "hostname": os.uname().nodename,
-        "router_ip": os.environ.get("BYPASS_ROUTER_IPV4", "未配置"),
-        "tailscale_ip": os.environ.get("BYPASS_ROUTER_TAILSCALE_IPV4", "自动检测"),
         "services": {name: service_state(name) for name in SERVICES},
         "dns": {
             "privacy_healthy": p_ok,
