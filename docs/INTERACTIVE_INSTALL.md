@@ -22,7 +22,7 @@ sudo ./install.sh
 | 上游主路由 IPv4 | 旁路由自身默认网关 | 从默认路由探测 |
 | 是否配置静态 IPv4 | 是否由脚本修改 NetworkManager | 默认否 |
 | Web 监听地址和端口 | 管理控制台入口 | 默认 `0.0.0.0:8443` |
-| SSH 端口 | 输入防火墙需要保留的管理端口 | 默认 22 |
+| SSH 端口 | 输入防火墙需要保留的当前 sshd 监听端口 | 自动探测，无法探测时默认 22 |
 | Tailscale 管理访问 | 是否允许 `100.64.0.0/10` 管理 Web | 默认是 |
 | 国内 DoH | 国内域名的加密直连解析器 | 提供保守默认值 |
 | 全球 DoH | 经代理访问的加密解析器 | 提供保守默认值 |
@@ -97,5 +97,5 @@ sudo .venv/bin/routerctl uninstall --yes
 - 仅支持 Debian 和 IPv4 LAN；
 - 仅支持 amd64/arm64 自动下载二进制；
 - 自动配置静态 IP 仅支持 NetworkManager；
-- 二进制使用 GitHub 最新稳定发布，当前尚未实现上游 checksum 固定验证；
+- 二进制使用 GitHub 最新稳定发布；安装时校验 GitHub Releases API 提供的 SHA-256 digest，但尚未实现版本固定或独立签名验证；
 - 正式 release-ready 仍需干净 Debian 13 虚拟机端到端验收。

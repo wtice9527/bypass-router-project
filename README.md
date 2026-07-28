@@ -1,30 +1,35 @@
 # Debian 可复制旁路由项目
 
-这是从一台实际运行的 Debian 13 家庭旁路由整理出的**参数化、脱敏、可生成、可安装、可升级、可回滚、可卸载**项目。
+> **面向 Debian 13 的参数化家庭旁路由部署项目**：集成 Mihomo、MosDNS、AdGuard Home、nftables/TProxy、systemd 与 Web 控制台。
+>
+> 当前状态：**已通过本地、隔离生命周期和 CI 校验；尚未完成干净 Debian 13 虚拟机的全链路验收，因此不是 release-ready。**
 
-项目整合：
+[![CI](https://github.com/wtice9527/bypass-router-project/actions/workflows/ci.yml/badge.svg)](https://github.com/wtice9527/bypass-router-project/actions/workflows/ci.yml)
 
-- Mihomo：规则分流、TCP Redirect、UDP TProxy、订阅与首选节点；
-- MosDNS：国内加密 DoH 与全球代理 DoH，公网 DNS 无明文 53 回退；
-- AdGuard Home：局域网 DNS 和保守广告过滤；
-- nftables：DNS 接管、透明代理与默认拒绝输入防火墙；
-- systemd：服务顺序、透明代理就绪等待、订阅更新和 Watchdog；
-- Web 控制台：节点、订阅、规则、AdGuard、服务、透明代理和诊断管理。
+## 它解决什么问题
 
-## 安全承诺
+- 把一台 Debian 主机部署为**旁路由**，而不是修改主路由；
+- LAN 客户端可按需把 IPv4 网关和 DNS 指向旁路由；
+- 国内 DNS 使用加密国内 DoH，全球 DNS 经 Mihomo 使用加密 DoH；**不提供公网明文 53 fallback**；
+- TCP 使用 Redirect、UDP 使用 TProxy；
+- 提供节点、订阅、规则、AdGuard、服务、透明代理与诊断的 Web 控制台；
+- 支持配置校验、生成、安装、升级、回滚、卸载与状态检查；
+- 发布目录不包含订阅、节点、Token、密码、私钥或原生产网络身份。
 
-发布目录不包含：
+## 适用范围与前提
 
-- 订阅 URL 或 Token；
-- 节点服务器、UUID、密码、私钥；
-- Web 管理密码；
-- 原生产机器 IP、Tailscale IP 或节点名称。
+| 项目 | 要求 |
+|---|---|
+| 系统 | Debian 13；IPv4 LAN |
+| 架构 | `amd64` 或 `arm64`（自动获取核心二进制） |
+| 权限 | 安装需要 `root` / `sudo` |
+| 网络 | 安装时可访问 Debian 软件源与 GitHub Releases |
+| 带外访问 | 强烈建议保留虚拟机/物理控制台或已可用的 Tailscale |
+| 客户端接管 | 仅把网关和 DNS 设置为旁路由 IP 的客户端会进入旁路由路径 |
 
-真实秘密只允许放在本机 `secrets.json` 中。该文件已被 `.gitignore` 排除，不进入生成包、日志或 manifest。
+> 项目**不会修改主路由 DHCP**，也不会自动把全网设备切换到旁路由。
 
-## 快速开始
-
-推荐在干净 Debian 13 主机直接运行交互部署：
+## 5 分钟交互部署
 
 ```bash
 git clone https://github.com/wtice9527/bypass-router-project.git
@@ -32,26 +37,72 @@ cd bypass-router-project
 sudo ./install.sh
 ```
 
-向导会自动探测接口、本机 IPv4、LAN 网段和上游网关，并询问 Web/SSH 端口、加密 DNS、订阅 URL、管理密码、Watchdog 策略，以及是否由 NetworkManager 配置本机静态 IP。完整说明见 [`docs/INTERACTIVE_INSTALL.md`](docs/INTERACTIVE_INSTALL.md)。
+安装器会：
 
-只生成配置、不安装系统：
+1. 检查 Debian 与 root 权限；
+2. 安装基础依赖并创建 Python 虚拟环境；
+3. 交互收集参数、校验输入并显示摘要；
+4. 在缺失时下载 Mihomo、MosDNS、AdGuard Home，并校验上游 SHA-256 digest；
+5. 写入配置、创建运行/状态目录、启用服务、应用订阅；
+6. 输出 Web 访问地址和恢复入口。
+
+### 向导需要你确认的内容
+
+| 类别 | 参数 |
+|---|---|
+| 网络 | LAN 接口、LAN CIDR、旁路由本机 IPv4、上游网关 |
+| 管理 | Web 监听地址/端口、当前 sshd 监听端口、Tailscale 管理访问 |
+| DNS | 国内加密 DoH、全球代理 DoH |
+| 代理 | HTTPS 订阅 URL、健康检测 URL |
+| 稳定性 | Watchdog 连续失败阈值、冷却时间 |
+| 安全 | Web 管理密码（无回显输入、二次确认、至少 12 字符） |
+| 可选高影响动作 | 是否由 NetworkManager 修改本机静态 IPv4（默认**否**） |
+
+完整流程与风险说明见：[交互部署指南](docs/INTERACTIVE_INSTALL.md)。
+
+## 部署后：让客户端使用旁路由
+
+安装成功不代表客户端已经走旁路由。需要在目标客户端手动设置：
+
+```text
+IPv4 网关 = 旁路由本机 IPv4
+DNS       = 旁路由本机 IPv4
+```
+
+确认稳定后，如需全网接管，请由管理员自行在主路由 DHCP 中做配置；这不属于安装器的自动操作范围。
+
+## 访问与检查
+
+Web 控制台地址：
+
+```text
+http://旁路由IP:Web端口
+```
+
+常用检查命令：
+
+```bash
+sudo .venv/bin/routerctl status
+systemctl --no-pager --full status mihomo mosdns adguardhome \
+  bypass-router-tproxy bypass-router-web
+ip rule show
+ip route show table 100
+sudo nft list table inet bypass_router
+```
+
+## 不使用交互模式
+
+高级用户或 CI 可自行准备 `config.json` 与 `secrets.json`：
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .
-.venv/bin/routerctl wizard
-```
 
-编辑 `config.json` 和 `secrets.json` 后：
-
-```bash
-# 参数、模板及原生配置校验
+# 校验，不写入系统
 .venv/bin/routerctl validate -c config.json -s secrets.json
-
-# 只生成脱敏 rootfs，不修改系统
 .venv/bin/routerctl generate -c config.json -o build/rootfs
 
-# 在临时目录模拟安装生命周期（推荐先做）
+# 在临时目录演练完整生命周期
 TMP=$(mktemp -d)
 .venv/bin/routerctl install -c config.json -s secrets.json --prefix "$TMP" --yes
 .venv/bin/routerctl status --prefix "$TMP"
@@ -59,69 +110,56 @@ TMP=$(mktemp -d)
 .venv/bin/routerctl rollback --prefix "$TMP" --yes
 .venv/bin/routerctl uninstall --prefix "$TMP" --yes
 
-# 生产安装：必须保留控制台或 Tailscale 带外通道
+# 生产安装（必须保留带外管理通道）
 sudo .venv/bin/routerctl install -c config.json -s secrets.json --yes
 ```
 
-项目**不会修改主路由 DHCP**。只有把 IPv4 网关和 DNS 显式设置为本机地址的客户端才进入旁路由路径。
+## 配置与秘密
 
-## 参数边界
+- `config.json`：网络、端口、DNS、策略路由、Watchdog 等非秘密参数；
+- `secrets.json`：订阅 URL 与 Web 管理密码；由向导创建时权限为 `0600`；
+- 两个文件均被 Git 忽略；**不要提交、截图或粘贴到 Issue。**
 
-非秘密参数位于 `config.json`：
+配置样例：
 
-- LAN 网卡、LAN CIDR、旁路由地址、上游网关；
-- 服务端口、fwmark、策略路由表；
-- 国内和全球加密 DNS 上游；
-- 代理健康检查、Watchdog 阈值和冷却时间；
-- Web 监听地址与端口。
-
-秘密位于 `secrets.json`：
-
-```json
-{
-  "subscription_url": "https://example.invalid/subscription",
-  "web_admin_password": "strong local password"
-}
+```text
+config.example.json
+secrets.example.json
 ```
 
 ## 生命周期命令
 
-| 命令 | 行为 |
+| 命令 | 作用 |
 |---|---|
-| `validate` | 校验参数、模板、nftables、Mihomo、Python 和 JavaScript |
-| `generate` | 生成不含真实 secrets 的 rootfs |
-| `install` | 备份旧文件、暂存、安装、启用服务并写 manifest |
-| `upgrade` | 按旧 manifest 备份，覆盖新版本，删除旧版本遗留文件 |
-| `rollback` | 恢复指定或最近备份 |
-| `uninstall` | 仅删除 manifest 管理的文件，保留可恢复备份 |
-| `status` | 检查安装版本、文件漂移和服务状态 |
-| `wizard` | 交互收集网络、DNS、代理、Web 和秘密参数，可选择直接安装 |
+| `routerctl wizard` | 交互生成配置；加 `--install --bootstrap` 可执行完整安装 |
+| `routerctl validate` | 校验参数、模板与可用的原生检查器 |
+| `routerctl generate` | 生成脱敏 rootfs，不修改系统 |
+| `routerctl install` | 备份、安装、启用服务并记录 manifest |
+| `routerctl upgrade` | 备份当前版本、覆盖并清理旧文件 |
+| `routerctl rollback` | 恢复指定或最近备份 |
+| `routerctl uninstall` | 删除 manifest 管理的文件并保留恢复点 |
+| `routerctl status` | 检查版本、文件漂移和服务状态 |
 
-生产写入失败时，安装器会删除本次新写文件并恢复备份。
+## 安全边界
 
-## 目录
+- 订阅 URL 只允许 HTTPS；
+- Web 密码使用 scrypt 哈希保存；
+- Mihomo Controller 只监听回环；
+- 公网 DNS 仅允许 DoH/DoT，没有明文 53 fallback；
+- 外部数据在 Web 前端转义，写操作要求认证和 CSRF；
+- 发布前 CI 执行测试、敏感信息扫描、模板渲染、Python/JavaScript/nftables 检查；
+- 生产安装会修改防火墙、策略路由、DNS 与服务状态，务必保留带外管理。
 
-```text
-assets/       可原样复制的 Web、运维脚本和 MosDNS 规则数据
-templates/    Mihomo/MosDNS/AdGuard/nftables/systemd 参数模板
-routerctl/    渲染和生命周期管理 CLI
-scripts/      发布门禁与敏感信息扫描
-tests/        单元、渲染和隔离生命周期测试
-docs/         架构、安装、验收和故障恢复文档
-release/      版本化发布包（生成物）
-```
+漏洞报告方式请见 [SECURITY.md](SECURITY.md)。
 
-## 当前验收等级
+## 文档导航
 
-本版本目标是：
-
-- 项目原型完整；
-- 脱敏 rootfs 可生成；
-- 配置校验和隔离目录生命周期可执行；
-- 生产安装、升级、回滚和卸载入口已实现。
-
-在一台**干净 Debian 13 虚拟机**完成真实重启、网络故障、全节点失效、DNS fail-closed 和卸载恢复测试后，才可标记为 release-ready。详见 [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)。
+- [交互部署指南](docs/INTERACTIVE_INSTALL.md)
+- [架构说明](docs/architecture.md)
+- [验收清单与已知边界](docs/ACCEPTANCE.md)
+- [贡献指南](CONTRIBUTING.md)
+- [安全策略](SECURITY.md)
 
 ## 许可证
 
-MIT
+[MIT](LICENSE)
