@@ -155,6 +155,7 @@ secrets.example.json
 ## 文档导航
 
 - [交互部署指南](docs/INTERACTIVE_INSTALL.md)
+- [使用 Hermes 管理与维护旁路由](docs/HERMES_OPERATIONS.md)
 - [架构说明](docs/architecture.md)
 - [验收清单与已知边界](docs/ACCEPTANCE.md)
 - [贡献指南](CONTRIBUTING.md)
